@@ -1,0 +1,78 @@
+---
+- name: Deploy Node.js Backend
+  hosts: analyser_node_vm
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Node.js and npm
+      apt:
+        name:
+          - nodejs
+          - npm
+        state: present
+
+    - name: Clone the repository
+      git:
+        repo: 'https://github.com/RevanthDadi9/analyzer.git'
+        dest: /home/azureuser/analyzer
+        version: main
+        force: yes
+        update: yes
+
+    - name: Ensure correct permissions for analyzer folder
+      file:
+        path: /home/azureuser/analyzer
+        state: directory
+        recurse: yes
+        owner: azureuser
+        group: azureuser
+        mode: '0755'
+
+    - name: Remove existing node_modules and package-lock.json
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /home/azureuser/analyzer/server/node_modules
+        - /home/azureuser/analyzer/server/package-lock.json
+
+    - name: Clean npm cache
+      become_user: azureuser
+      shell: npm cache clean --force
+
+    - name: Install backend dependencies cleanly
+      become_user: azureuser
+      shell: npm install
+      args:
+        chdir: /home/azureuser/analyzer/server
+
+    - name: Create systemd service for Node.js backend
+      copy:
+        dest: /etc/systemd/system/analyzer-backend.service
+        content: |
+          [Unit]
+          Description=Node.js Analyzer Backend
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/bin/node /home/azureuser/analyzer/server/index.js
+          WorkingDirectory=/home/azureuser/analyzer/server
+          Restart=always
+          User=azureuser
+          Environment=NODE_ENV=production
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      command: systemctl daemon-reexec
+
+    - name: Enable and start backend service
+      systemd:
+        name: analyzer-backend
+        enabled: yes
+        state: started
+

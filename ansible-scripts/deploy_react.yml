@@ -1,0 +1,120 @@
+- name: Deploy React Application from client folder using Nginx
+  hosts: analyser_react_vm
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required dependencies for Node.js setup
+      apt:
+        name:
+          - curl
+          - gnupg
+        state: present
+
+    - name: Add NodeSource APT repo for Node.js 18.x
+      shell: curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+      args:
+        executable: /bin/bash
+
+    - name: Install Node.js and npm
+      apt:
+        name:
+          - nodejs
+        state: present
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Clone the GitHub repo
+      git:
+        repo: 'https://github.com/RevanthDadi9/analyzer.git'
+        dest: /home/azureuser/analyzer
+        version: main
+        force: yes
+
+    - name: Install dependencies for React app
+      command: npm install
+      args:
+        chdir: /home/azureuser/analyzer/client
+
+    - name: Build the React app
+      command: npm run build
+      args:
+        chdir: /home/azureuser/analyzer/client
+      register: build_result
+      failed_when: build_result.rc != 0
+      changed_when: False
+
+    - name: Show build logs
+      debug:
+        var: build_result.stdout
+
+    - name: Check if build folder exists
+      stat:
+        path: /home/azureuser/analyzer/client/dist
+      register: build_folder
+
+    - name: Fail if dist folder is missing
+      fail:
+        msg: "Build folder is missing! Ensure 'npm run build' ran successfully."
+      when: not build_folder.stat.exists
+
+    - name: Copy built React app to Nginx root
+      copy:
+        src: /home/azureuser/analyzer/client/dist/
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: Configure Nginx for React app
+      copy:
+        dest: /etc/nginx/sites-available/react-app
+        content: |
+          server {
+              listen 80;
+              server_name _;https://github.com/RevanthDadi9/analyzer.git
+
+              root /var/www/html;
+              index index.html;
+
+              location / {
+                  try_files $uri /index.html;
+              }
+
+              # Reverse proxy for Node.js API
+              location /api/node/ {
+                  proxy_pass http://10.0.0.5:5013/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+
+              # Reverse proxy for Flask API
+              location /api/flask/ {
+                  proxy_pass http://10.0.0.4:8000/;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+          }
+
+    - name: Enable the Nginx config
+      file:
+        src: /etc/nginx/sites-available/react-app
+        dest: /etc/nginx/sites-enabled/react-app
+        state: link
+        force: yes
+
+    - name: Remove default Nginx site (if exists)
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+

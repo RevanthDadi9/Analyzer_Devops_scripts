@@ -1,0 +1,75 @@
+---
+- name: Deploy Python Flask API in virtual environment
+  hosts: analyser_python_vm
+  become: yes
+  vars:
+    repo_url: https://github.com/RevanthDadi9/analyzer.git  # ← replace with your actual repo
+    repo_path: /home/azureuser/analyzer
+    app_dir: /home/azureuser/analyzer/analyzer
+    venv_dir: /home/azureuser/analyzer/analyzer/venv
+
+  tasks:
+    - name: Ensure git is installed
+      apt:
+        name: git
+        state: present
+        update_cache: yes
+
+    - name: Clone the repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_path }}"
+        version: main
+        force: yes
+
+    - name: Ensure Python and venv are installed
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+        state: present
+        update_cache: yes
+
+    - name: Create virtual environment
+      command: python3 -m venv {{ venv_dir }}
+      args:
+        creates: "{{ venv_dir }}/bin/activate"
+
+    - name: Install required Python packages in venv
+      command: "{{ venv_dir }}/bin/pip install flask flask-cors transformers torch"
+
+    - name: Set ownership and permissions
+      file:
+        path: "{{ app_dir }}"
+        owner: azureuser
+        group: azureuser
+        recurse: yes
+
+    - name: Create systemd service for Flask API
+      copy:
+        dest: /etc/systemd/system/analyzer-flask-api.service
+        content: |
+          [Unit]
+          Description=Flask API for Analyzer
+          After=network.target
+
+          [Service]
+          User=azureuser
+          WorkingDirectory={{ app_dir }}
+          ExecStart={{ venv_dir }}/bin/python {{ app_dir }}/app.py
+          Restart=always
+          Environment=FLASK_ENV=production
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      command: systemctl daemon-reexec
+
+    - name: Enable and start Flask API service
+      systemd:
+        name: analyzer-flask-api
+        enabled: yes
+        state: started
+
