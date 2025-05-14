@@ -1,0 +1,83 @@
+trigger:
+  paths:
+    include:
+      - analyzer/analyzer/*
+
+pool:
+  name: default
+
+stages:
+  - stage: DeployFlaskAPI
+    displayName: Deploy Flask API to React VM
+    jobs:
+      - deployment: UploadFlaskAPI
+        environment: 'flask-api-vm-env'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self  # Checkout the repo from Azure DevOps
+
+                - script: |
+                    echo "Checking directory structure"
+                    ls -R $(Build.SourcesDirectory)
+                  displayName: 'Check Directory Structure'
+
+                - task: CopyFilesOverSSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'
+                    sourceFolder: '$(Build.SourcesDirectory)/analyzer'
+                    contents: '**/*'
+                    targetFolder: '/home/azureuser/flask-api-temp'
+                    overwrite: true
+                  displayName: 'Upload Flask API Code to Flask VM'
+
+                - task: SSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'
+                    runOptions: inline
+                    inline: |
+                      echo "Deploying Flask API from Azure DevOps to Flask API VM..."
+
+                      shopt -s nullglob
+                      FILES=(/home/azureuser/flask-api-temp/*)
+                      if [ ${#FILES[@]} -gt 0 ]; then
+                         scp -i ~/analyser-vms_key.pem -o StrictHostKeyChecking=no -r "${FILES[@]}" azureuser@10.0.0.4:/home/azureuser/analyzer/analyzer/
+                      else
+                         echo "No files found to copy"
+                      fi
+
+                      echo "Connecting to Flask API VM from React VM..."
+                      
+                      ssh -i ~/analyser-vms_key.pem -o StrictHostKeyChecking=no -T azureuser@10.0.0.4 << 'EOF'
+                      echo "Connected to Flask API VM"
+                      whoami
+                      cd /home/azureuser/analyzer/analyzer
+
+                      source venv/bin/activate
+                        
+                       # echo "Checking if Flask API is already running..."
+                        #if pgrep -f "app.py"; then
+                         # echo "Flask API is running. Restarting..."
+                          #pkill -f "app.py"
+                        #else
+                         # echo "Flask API is not running. Starting..."
+                        #fi
+
+                        echo "Installing Python requirements..."
+                        #pip install --upgrade pip
+                        pip install --disable-pip-version-check -r dependencies.txt
+
+                        echo "Starting Flask API..."
+                        
+                               export App_Name='ANALYZER'
+                                 if [[ $(pm2 id "${App_Name}") = "[]" ]];
+                                 then
+                                  pm2 start app.py --name "${App_Name}"
+                                 # pm2 start npm --name "${Node_App_Name}" -- start
+                                 else
+                                  pm2 restart "${App_Name}"
+                                 fi
+                      EOF
+                  displayName: 'Deploy Flask API to Flask VM from React VM'
+

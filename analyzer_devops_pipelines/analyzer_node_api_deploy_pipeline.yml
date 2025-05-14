@@ -1,0 +1,55 @@
+trigger:
+  paths:
+    include:
+      - server/*
+
+pool:
+  name: default
+
+stages:
+  - stage: DeployNodeAPI
+    displayName: Deploy Node.js API to Private VM
+    jobs:
+      - deployment: UploadNodeAPI
+        environment: 'node-api-vm-env'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self  # Checkout the repo from Azure DevOps
+
+                - task: CopyFilesOverSSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'  # React VM with public IP
+                    sourceFolder: '$(Build.SourcesDirectory)/server'
+                    contents: |
+                      **/*
+                      !**/node_modules/**
+                      !**/.git/**
+                      !**/.env
+                    targetFolder: '/home/azureuser/node-api-temp'
+                    overwrite: true
+                  displayName: 'Upload Server Code to React VM'
+
+                - task: SSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'
+                    runOptions: inline
+                    inline: |
+                      echo "Deploying Node API from Azure DevOps to Node API VM..."
+
+                      # Copy from React VM to Node API VM
+                      scp -i ~/analyser-vms_key.pem -o StrictHostKeyChecking=no -T -r /home/azureuser/node-api-temp/* azureuser@10.0.0.5:/home/azureuser/analyzer/server/
+
+                      ssh -T -i ~/analyser-vms_key.pem -o StrictHostKeyChecking=no azureuser@10.0.0.5 << 'EOF'
+                        echo "Installing dependencies and restarting PM2 service..."
+                        cd /home/azureuser/analyzer/server
+                        npm install
+                        
+                        # Start or restart PM2 process
+                        pm2 describe node-api >/dev/null 2>&1 && \
+                        pm2 restart node-api || \
+                        pm2 start index.js --name node-api
+                      EOF
+                  displayName: 'Deploy to Node API VM from React VM'
+

@@ -1,0 +1,86 @@
+trigger:
+  paths:
+    include:
+      - analyzer/client/**
+
+pool:
+  name: default
+
+variables:
+  vm_target_path: /home/azureuser/analyzer
+  react_path: analyzer/client
+  nginx_root: /var/www/html
+
+stages:
+  - stage: DeployReactApp
+    displayName: Deploy React App to Nginx VM
+    jobs:
+      - job: DeployReact
+        displayName: Build and Deploy React App
+        steps:
+
+          - checkout: self
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '18.x'
+            displayName: Use Node.js 18
+
+          - script: |
+              cd client
+              npm install
+              npm run build
+            displayName: Build React App
+
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(Build.SourcesDirectory)/client/dist'
+              Contents: '**'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+            displayName: Copy React Build to Artifact Staging
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: react-dist
+            displayName: Publish Build Artifacts
+
+  - stage: DeployToVM
+    displayName: Upload & Deploy on VM
+    dependsOn: DeployReactApp
+    jobs:
+      - deployment: UploadReactToVM
+        environment: 'react-vm-env'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - download: current
+                  artifact: react-dist
+                  # Add the debugging script here to verify the build contents
+                - script: |
+                    ls -R $(Pipeline.Workspace)/react-dist
+                  displayName: 'Check React Build Directory Contents'
+                
+                - task: CopyFilesOverSSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'  # Your new SSH service connection name
+                    sourceFolder: '$(Pipeline.Workspace)/react-dist'
+                    contents: '**'
+                    targetFolder: '/var/www/html'
+                    overwrite: true
+                  displayName: Copy React build to VM Nginx path
+
+                - task: SSH@0
+                  inputs:
+                    sshEndpoint: 'my-ssh-react-SC'
+                    runOptions: inline
+                    inline: |
+                        ls -l /var/www/html
+                        sudo mkdir -p /var/www/html/assets  # Make sure the folder exists
+                        sudo chown -R $USER:$USER /var/www/html  # Set proper ownership
+                        sudo chmod -R 755 /var/www/html  # Ensure proper permissions
+                        sudo systemctl restart nginx
+                  displayName: Restart Nginx Server
+

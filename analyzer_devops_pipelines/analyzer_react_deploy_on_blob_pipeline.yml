@@ -1,0 +1,57 @@
+trigger:
+ paths:
+   include:
+     - client/*
+
+pool:
+  name: default
+
+variables:
+  buildDir: 'client/dist'
+
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildReactApp
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '18.x'  # Adjust if needed
+            displayName: 'Install Node.js'
+
+          - script: |
+              cd client
+              npm install
+              npm run build
+            displayName: 'Install and Build React App'
+            
+          - script: |
+              echo "Build directory: $(buildDir)"
+              if [ -d "$(buildDir)" ]; then
+                echo "Directory exists."
+                ls $(buildDir)
+              else
+                echo "Directory $(buildDir) does not exist."
+              fi
+            displayName: 'Check Build Directory'
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'my-service-connection'  # 🔁 Replace with your Azure DevOps service connection name
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Uploading to Azure Blob Storage..."
+                az storage blob upload-batch \
+                  --account-name reactstorageacct \
+                  --destination '$web' \
+                  --source $(buildDir) \
+                  --connection-string "$(AZURE_STORAGE_CONNECTION_STRING)" \
+                  --overwrite
+                echo "✅ Deployment complete!"
+                echo "🌐 Your static site is live at:"
+                echo "https://reactstorageacct.z13.web.core.windows.net"  
+            env:
+              AZURE_STORAGE_CONNECTION_STRING: $(AZURE_STORAGE_CONNECTION_STRING)
+            displayName: 'Upload to Azure Blob Static Website Container'
+
